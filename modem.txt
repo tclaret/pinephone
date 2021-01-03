@@ -1,0 +1,194 @@
+||||||||||||||||||||||||| READ FIRST! ||||||||||||||||||||||||||||||
+
+This file is outdated, for kernels 5.5+
+
+For current information go to: https://xnux.eu/devices/feature/modem-pp.html
+
+||||||||||||||||||||||||| READ FIRST! ||||||||||||||||||||||||||||||
+
+
+Making calls work on PinePhone
+------------------------------
+
+Modem needs to be setup with:
+
+  AT+QDAI=1,0,0,1,0,1,1,1
+  AT+QDAI?
+
+and restarted.
+  
+This sets modem to:
+
+  1 - Digital PCM
+  0 - I2S master
+  0 - Primary mode (short sync)
+  1 - 256kHz clock (256kHz / 16bit = 16k samples/s)
+  0 - 16bit linear format
+  1 - 16kHz sample
+  1 - 1 slot
+  1 - map to first slot (the only slot)
+
+The SoC I2S0 interface needs to be configured to match this. To try various
+configurations in real-time we can run pulseaudio and set it up so that:
+
+1) alsamixer
+
+  - set "Line Out Source" to "Mono Differential"
+  - Unmute "AIF1 Slot 0 Digital DAC"
+  - (optional) unmute the microphone / mute loudpeaker
+
+2) pulseaudio
+
+  # Outbound - connect audio from aif1 to i2s0
+  pactl load-module module-loopback \
+  	source=alsa_input.platform-sound.stereo-fallback \
+  	sink=alsa_output.platform-sound-modem.mono-fallback
+
+  # Inbound - connect audio from i2s0 to aif1
+  pactl load-module module-loopback \
+  	source=alsa_input.platform-sound-modem.mono-fallback \
+  	sink=alsa_output.platform-sound.stereo-fallback
+
+To test inbound audio, we can play audio using modem's TTS (text to speech
+functionality):
+
+  AT+QTTS=2,"Welcome to use the module of QUECTEL"
+
+To test outbound, we can make a call. I call the pinephone from a dumbphone
+and answer the call with:
+
+  ATA
+
+I2S interface module has quite a lot of toggles/bits that can be configured,
+and the right configuration was found to be:
+
+I2S0: (initial)
+0x01c22000 : 00000107
+0x01c22004 : 00000f33
+0x01c22008 : 00000030
+0x01c2200c : 00000000
+0x01c22010 : 00000000
+0x01c22014 : 000400f5
+0x01c22018 : 00390000
+0x01c2201c : 00000088
+0x01c22020 : 00000000
+0x01c22024 : 000001c4
+0x01c22028 : 00000000
+0x01c2202c : 00000000
+0x01c22030 : 00000000
+0x01c22034 : 00001010
+0x01c22038 : 00000000
+0x01c2203c : 00000000
+0x01c22040 : 00000000
+0x01c22044 : 76543210
+0x01c22048 : 00000000
+0x01c2204c : 00000000
+0x01c22050 : 00000000
+0x01c22054 : 00001000
+0x01c22058 : 76543210
+0x01c2205c : 00000050
+
+I2S0: (working)
+0x01c22000 : 00000107
+0x01c22004 : 00080f33
+0x01c22008 : 00000030
+0x01c2200c : 00000004
+0x01c22010 : 00000006
+0x01c22014 : 000400f5
+0x01c22018 : 003e010e
+0x01c2201c : 00000088
+0x01c22020 : 00000000
+0x01c22024 : 000001c4
+0x01c22028 : 00316016
+0x01c2202c : 00314b88
+0x01c22030 : 00000000
+0x01c22034 : 00000010
+0x01c22038 : 00000000
+0x01c2203c : 00000000
+0x01c22040 : 00000000
+0x01c22044 : 76543210
+0x01c22048 : 00000000
+0x01c2204c : 00000000
+0x01c22050 : 00000000
+0x01c22054 : 00001000
+0x01c22058 : 76543210
+0x01c2205c : 00000050
+
+The only difference comapred to what kernels configures is that TX offset should be
+set to 0. and RX offset to 1 (already is).
+
+Linux kernel with necessary patches and DTS changes integrated is available at:
+
+  https://megous.com/git/linux/log/?h=pp-5.5
+  
+If you want to build my kernel, use this branch, because pp-5.5 branch is not
+standalone and depends on ths-5.5 branch. orange-pi-5.5 is integration
+branch for all my kernel work:
+  
+  https://megous.com/git/linux/log/?h=orange-pi-5.5
+
+
+To enable the modem in my kernel you need to run this script (only on DEV
+phone version 1.0!!):
+
+-------------------------------------------
+#!/bin/sh
+
+GPIO=/sys/class/gpio
+PIN=/sys/class/gpio/gpio
+PB3_PWRKEY=35
+PL7_PWR=359
+PC4_RESET=68
+PH8_DISABLE=232
+PH7_WAKEUP=231
+
+echo $PL7_PWR > $GPIO/export
+echo $PC4_RESET > $GPIO/export
+echo $PH7_WAKEUP > $GPIO/export
+echo $PH8_DISABLE > $GPIO/export
+echo $PB3_PWRKEY > $GPIO/export
+
+echo out > $PIN$PH8_DISABLE/direction
+echo out > $PIN$PH7_WAKEUP/direction
+echo out > $PIN$PC4_RESET/direction
+echo out > $PIN$PL7_PWR/direction
+echo out > $PIN$PB3_PWRKEY/direction
+
+echo 0 > $PIN$PH8_DISABLE/value
+echo 0 > $PIN$PH7_WAKEUP/value
+echo 0 > $PIN$PC4_RESET/value
+
+echo 1 > $PIN$PL7_PWR/value
+sleep 0.1
+echo 1 > $PIN$PB3_PWRKEY/value
+sleep 0.2
+echo 0 > $PIN$PB3_PWRKEY/value
+-------------------------------------------
+
+To disable the modem before poweroff/reboot:
+
+-------------------------------------------
+#!/bin/sh
+
+GPIO=/sys/class/gpio
+PIN=/sys/class/gpio/gpio
+PB3_PWRKEY=35
+PL7_PWR=359
+PC4_RESET=68
+PH8_DISABLE=232
+PH7_WAKEUP=231
+
+echo 1 > $PIN$PB3_PWRKEY/value
+sleep 0.8
+echo 0 > $PIN$PB3_PWRKEY/value
+
+echo waiting for shutdown
+sleep 30
+
+echo 0 > $PIN$PL7_PWR/value
+-------------------------------------------
+
+
+Enjoy!
+
+   ~megi

@@ -1,0 +1,9 @@
+# modem
+sudo /usr/share/ofono/scripts/enable-modem
+sudo /usr/share/ofono/scripts/online-modem
+#sound
+amixer -c 0 set 'Line Out' unmute
+amixer sset 'Line Out' 100%
+alsactl -f /path/to/my/phone_mixer_settings.state store
+alsactl -f /path/to/my/phone_mixer_settings.state restore
+
